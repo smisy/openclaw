@@ -898,10 +898,18 @@ export function createGatewayHttpServer(opts: {
               rateLimiter,
             }),
         },
-        {
-          name: "slack",
-          run: () => handleSlackHttpRequest(req, res),
-        },
+        // Only register the Slack stage when Slack channels are configured.
+        // The lazy facade import of @slack/bolt fails with MODULE_NOT_FOUND
+        // when the optional dependency is not installed (e.g. headless sidecar
+        // deployments), spamming logs on every request.
+        ...(configSnapshot.channels?.slack
+          ? [
+              {
+                name: "slack" as const,
+                run: () => handleSlackHttpRequest(req, res),
+              },
+            ]
+          : []),
       ];
       if (openResponsesEnabled) {
         requestStages.push({
