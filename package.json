@@ -1211,7 +1211,7 @@
     "express": "^5.2.1",
     "file-type": "22.0.0",
     "gaxios": "7.1.4",
-    "hono": "4.12.9",
+    "hono": "4.12.18",
     "ipaddr.js": "^2.3.0",
     "jiti": "^2.6.1",
     "json5": "^2.2.3",
@@ -1278,7 +1278,7 @@
   "packageManager": "pnpm@10.32.1",
   "pnpm": {
     "overrides": {
-      "hono": "4.12.9",
+      "hono": "4.12.18",
       "@hono/node-server": "1.19.10",
       "axios": "1.13.6",
       "fast-xml-parser": "5.5.7",
