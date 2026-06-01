@@ -3,6 +3,7 @@ import {
   resolveAgentModelFallbackValues,
   resolveAgentModelPrimaryValue,
 } from "../config/model-input.js";
+import { emitDiagnosticEvent } from "../infra/diagnostic-events.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { sanitizeForLog } from "../terminal/ansi.js";
 import {
@@ -224,12 +225,52 @@ function throwFallbackFailureSummary(params: {
   label: string;
   formatAttempt: (attempt: FallbackAttempt) => string;
   soonestCooldownExpiry?: number | null;
+  /** Provider the caller asked for (primary, pre-fallback). Used for the
+   *  `openclaw.model.fallback.exhausted` observability counter (GH-5632). */
+  requestedProvider: string;
+  /** Model the caller asked for (primary, pre-fallback). Used for the
+   *  `openclaw.model.fallback.exhausted` observability counter (GH-5632). */
+  requestedModel: string;
+  /** Fallback chain kind for the observability counter (GH-5632). */
+  kind: "text" | "image";
+  /** Optional run id propagated through to the diagnostic event. */
+  runId?: string;
 }): never {
   if (params.attempts.length <= 1 && params.lastError) {
+    // Single-attempt path: surface the underlying error directly. The fallback
+    // chain wasn't really exercised (only one configured candidate), so we do
+    // NOT emit the `model.fallback.exhausted` diagnostic event here — that
+    // event semantically means "all candidates in a multi-candidate chain
+    // failed" (matches GH-5632 spec: "call site that currently logs
+    // FallbackSummaryError: All models failed (N)").
     throw params.lastError;
   }
   const summary =
     params.attempts.length > 0 ? params.attempts.map(params.formatAttempt).join(" | ") : "unknown";
+
+  // GH-5632: emit fallback-exhaustion counter so ai-central on-call can alert
+  // on auth-class outages in minutes (real-traffic-derived, sub-minute
+  // resolution) rather than waiting ~9h for DeploymentReplicasMismatch.
+  // Reason = terminal attempt's classification, falling back to "unknown"
+  // when the last candidate failed without a recognised reason.
+  const terminalReason =
+    params.attempts.length > 0
+      ? (params.attempts[params.attempts.length - 1].reason ?? "unknown")
+      : "unknown";
+  try {
+    emitDiagnosticEvent({
+      type: "model.fallback.exhausted",
+      requestedProvider: params.requestedProvider,
+      requestedModel: params.requestedModel,
+      reason: terminalReason,
+      kind: params.kind,
+      totalAttempts: params.attempts.length,
+      ...(params.runId ? { runId: params.runId } : {}),
+    });
+  } catch {
+    // Diagnostic emission must never block the user-visible error path.
+  }
+
   throw new FallbackSummaryError(
     `All ${params.label} failed (${params.attempts.length || params.candidates.length}): ${summary}`,
     params.attempts,
@@ -885,6 +926,10 @@ export async function runWithModelFallback<T>(params: {
       cfg: params.cfg,
       candidates,
     }),
+    requestedProvider: params.provider,
+    requestedModel: params.model,
+    kind: "text",
+    ...(params.runId ? { runId: params.runId } : {}),
   });
 }
 
@@ -938,5 +983,8 @@ export async function runWithImageModelFallback<T>(params: {
     lastError,
     label: "image models",
     formatAttempt: (attempt) => `${attempt.provider}/${attempt.model}: ${attempt.error}`,
+    requestedProvider: candidates[0]?.provider ?? DEFAULT_PROVIDER,
+    requestedModel: candidates[0]?.model ?? DEFAULT_MODEL,
+    kind: "image",
   });
 }

@@ -147,6 +147,50 @@ export type DiagnosticToolLoopEvent = DiagnosticBaseEvent & {
   pairedToolName?: string;
 };
 
+/**
+ * Emitted by the model fallback runner when the entire candidate chain is
+ * exhausted without producing a successful response (i.e. just before
+ * `FallbackSummaryError` is thrown). Surfaces the requested
+ * provider/model the caller asked for, the terminal failure reason from the
+ * last attempted candidate, and total attempt count. Consumed by
+ * `extensions/diagnostics-otel` to emit the
+ * `openclaw.model.fallback.exhausted` counter that powers the ai-central
+ * `AICentralFallbackExhausted{Auth,}` alerts (GH-5632).
+ */
+export type DiagnosticModelFallbackExhaustedEvent = DiagnosticBaseEvent & {
+  type: "model.fallback.exhausted";
+  /** Provider the caller asked for (the primary, before fallback substitution). */
+  requestedProvider: string;
+  /** Model the caller asked for (the primary, before fallback substitution). */
+  requestedModel: string;
+  /**
+   * Terminal reason classification from the last attempted candidate. Mirrors
+   * `FailoverReason` from `agents/pi-embedded-helpers/types.ts`. Defaults to
+   * `"unknown"` when no candidate produced a classified reason.
+   */
+  reason:
+    | "auth"
+    | "auth_permanent"
+    | "format"
+    | "rate_limit"
+    | "overloaded"
+    | "billing"
+    | "timeout"
+    | "model_not_found"
+    | "session_expired"
+    | "unknown";
+  /**
+   * Fallback chain kind. `"text"` for `runWithModelFallback`, `"image"` for
+   * `runWithImageModelFallback`. Lets dashboards/alerts scope to text-only
+   * traffic without picking up image-generation fallbacks.
+   */
+  kind: "text" | "image";
+  /** Number of candidate attempts the chain actually executed. */
+  totalAttempts: number;
+  /** Optional run identifier propagated from `runWithModelFallback`. */
+  runId?: string;
+};
+
 export type DiagnosticEventPayload =
   | DiagnosticUsageEvent
   | DiagnosticWebhookReceivedEvent
@@ -160,7 +204,8 @@ export type DiagnosticEventPayload =
   | DiagnosticLaneDequeueEvent
   | DiagnosticRunAttemptEvent
   | DiagnosticHeartbeatEvent
-  | DiagnosticToolLoopEvent;
+  | DiagnosticToolLoopEvent
+  | DiagnosticModelFallbackExhaustedEvent;
 
 export type DiagnosticEventInput = DiagnosticEventPayload extends infer Event
   ? Event extends DiagnosticEventPayload

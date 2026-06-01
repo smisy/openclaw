@@ -232,6 +232,18 @@ export function createDiagnosticsOtelService(): OpenClawPluginService {
         unit: "1",
         description: "Run attempts",
       });
+      // GH-5632: per-request counter for in-process model-fallback chain
+      // exhaustion. Labels: `openclaw.requested_provider`,
+      // `openclaw.requested_model`, `openclaw.reason` (FailoverReason),
+      // `openclaw.kind` ("text"|"image"). Powers the ai-central
+      // `AICentralFallbackExhausted{Auth,}` alerts.
+      const modelFallbackExhaustedCounter = meter.createCounter(
+        "openclaw.model.fallback.exhausted",
+        {
+          unit: "1",
+          description: "Model fallback chain exhausted without producing a successful response",
+        },
+      );
 
       if (logsEnabled) {
         const logExporter = new OTLPLogExporter({
@@ -609,6 +621,17 @@ export function createDiagnosticsOtelService(): OpenClawPluginService {
         queueDepthHistogram.record(evt.queued, { "openclaw.channel": "heartbeat" });
       };
 
+      const recordModelFallbackExhausted = (
+        evt: Extract<DiagnosticEventPayload, { type: "model.fallback.exhausted" }>,
+      ) => {
+        modelFallbackExhaustedCounter.add(1, {
+          "openclaw.requested_provider": evt.requestedProvider,
+          "openclaw.requested_model": evt.requestedModel,
+          "openclaw.reason": evt.reason,
+          "openclaw.kind": evt.kind,
+        });
+      };
+
       unsubscribe = onDiagnosticEvent((evt: DiagnosticEventPayload) => {
         try {
           switch (evt.type) {
@@ -647,6 +670,9 @@ export function createDiagnosticsOtelService(): OpenClawPluginService {
               return;
             case "diagnostic.heartbeat":
               recordHeartbeat(evt);
+              return;
+            case "model.fallback.exhausted":
+              recordModelFallbackExhausted(evt);
               return;
           }
         } catch (err) {
