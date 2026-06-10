@@ -125,6 +125,7 @@ import { createGatewayRuntimeState } from "./server-runtime-state.js";
 import { resolveSessionKeyForRun } from "./server-session-key.js";
 import { logGatewayStartup } from "./server-startup-log.js";
 import { runStartupMatrixMigration } from "./server-startup-matrix-migration.js";
+import { beginGatewayStartupPhases, markGatewayStartupPhase } from "./server-startup-phase.js";
 import { runStartupSessionMigration } from "./server-startup-session-migration.js";
 import { startGatewaySidecars } from "./server-startup.js";
 import { startGatewayTailscaleExposure } from "./server-tailscale.js";
@@ -393,6 +394,14 @@ export async function startGatewayServer(
     description: "raw stream log path override",
   });
 
+  // GH-364: coarse startup phase markers so a bind-timeout watchdog can name the
+  // phase that was in progress when the gateway failed to bind. Tracker is gated
+  // off the minimal unit gateway to keep its logs quiet.
+  if (!minimalTestGateway) {
+    beginGatewayStartupPhases({ log });
+    markGatewayStartupPhase("config-load");
+  }
+
   let configSnapshot = await readConfigFileSnapshot();
   if (configSnapshot.legacyIssues.length > 0) {
     if (isNixMode) {
@@ -606,6 +615,7 @@ export async function startGatewayServer(
   let pluginRegistry = emptyPluginRegistry;
   let baseGatewayMethods = baseMethods;
   if (!minimalTestGateway) {
+    markGatewayStartupPhase("plugin-load");
     ({ pluginRegistry, gatewayMethods: baseGatewayMethods } = loadGatewayStartupPlugins({
       cfg: gatewayPluginConfigAtStart,
       workspaceDir: defaultWorkspaceDir,
@@ -726,6 +736,9 @@ export async function startGatewayServer(
     channelManager,
     startedAt: serverStartedAt,
   });
+  if (!minimalTestGateway) {
+    markGatewayStartupPhase("listener-bind");
+  }
   const {
     canvasHost,
     releasePluginRouteRegistry,
@@ -1340,6 +1353,9 @@ export async function startGatewayServer(
       log,
       isNixMode,
     });
+    if (!minimalTestGateway) {
+      markGatewayStartupPhase("ready");
+    }
     stopGatewayUpdateCheck = minimalTestGateway
       ? () => {}
       : scheduleGatewayUpdateCheck({
